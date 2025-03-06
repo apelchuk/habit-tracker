@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Habit Tracker</title>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; }
+    .habit-container { max-width: 800px; margin: auto; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { 
+      border: 1px solid #ddd; 
+      padding: 10px; 
+      text-align: center; 
+      white-space: nowrap;  /* prevents wrapping */
+    }
+    th { background-color: #f4f4f4; }
+    .stats { margin-bottom: 20px; max-width: 800px; margin: auto; }
+    .week-header { font-size: 1.2em; margin-top: 20px; font-weight: bold; }
+    .today-date { margin-bottom: 10px; font-size: 1.2em; }
+    .edit-btn, .delete-btn, .archive-btn { cursor: pointer; margin-left: 5px; }
+    .red-x { color: red; font-weight: bold; cursor: pointer; }
+    .archive-section { margin-top: 40px; }
+    .archive-section h2 { font-size: 1.2em; margin-bottom: 10px; }
+    button { cursor: pointer; }
+  </style>
+  </head>
+<body>
+  <h1>Arkady's Badass Habit Tracker</h1>
+
+  <!-- Statistics Section: Shows both active and archived habits -->
+  <div class="stats">
+    <h2>Weekly Overview</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Habit</th>
+          <th># Days Completed</th>
+          <th># Weeks with 5+ Days Completed</th>
+          <th>Habit Ended On</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="statsTableBody"></tbody>
+    </table>
+  </div>
+
+  <div class="habit-container">
+    <input type="text" id="habitInput" placeholder="Enter a habit" onkeydown="if(event.key==='Enter'){addHabit();}">
+    <button onclick="addHabit()">Add Habit</button>
+    <div id="weeklyTrackers"></div>
+  </div>
+
+  <!-- Archived Weeks Section (for past weeks' progress) -->
+  <div class="archive-section" id="archiveSection"></div>
+
+  <script>
+    // Global structure: habitData holds currentWeek, archivedWeeks, and archivedHabits.
+    let habitData;
+    let habits;       // Shortcut for active habits (current week)
+    let startDate;    // Current week's start date (as a Date object)
+    let currentWeekNumber;
+    
+    // Load saved data from localStorage.
+    function loadData() {
+        const data = localStorage.getItem("habitTrackerData");
+        // Get the current week's start date as a Date object.
+        const currentWeekStart = getWeekStartDate(new Date());
+        // Instead of an ISO string, store the timestamp.
+        const currentWeekStartTimestamp = getWeekStartDate(new Date()).getTime();
+        
+  if (data) {
+    let parsed = JSON.parse(data);
+    // Compare timestamps instead of strings.
+    if (parsed.currentWeek.startDate !== currentWeekStartTimestamp) {
+      parsed.archivedWeeks.push(parsed.currentWeek);
+      const newHabits = parsed.currentWeek.habits.map(habit => ({
+        name: habit.name,
+        days: [false, false, false, false, false, false, false]
+      }));
+      parsed.currentWeek = { startDate: currentWeekStartTimestamp, habits: newHabits };
+    }
+    if (!parsed.archivedHabits) {
+      parsed.archivedHabits = [];
+    }
+    habitData = parsed;
+  } else {
+    habitData = {
+      currentWeek: { startDate: currentWeekStartTimestamp, habits: [] },
+      archivedWeeks: [],
+      archivedHabits: []
+    };
+  }
+  habits = habitData.currentWeek.habits;
+  // Recreate the date from the timestamp.
+  startDate = new Date(habitData.currentWeek.startDate);
+  currentWeekNumber = getWeekNumber(new Date());
+    }
+
+    // Save habitData back to localStorage.
+    function saveData() {
+      localStorage.setItem("habitTrackerData", JSON.stringify(habitData));
+    }
+
+    // Add a new active habit.
+    function addHabit() {
+      let input = document.getElementById("habitInput");
+      let habitName = input.value.trim();
+      if (habitName !== "") {
+        habits.push({ name: habitName, days: [false, false, false, false, false, false, false] });
+        input.value = "";
+        saveData();
+        renderWeeklyTrackers();
+        updateStats();
+      }
+    }
+
+    // Edit an active habit.
+    function editHabit(index) {
+      let newName = prompt("Edit habit name:", habits[index].name);
+      if (newName) {
+        habits[index].name = newName.trim();
+        saveData();
+        renderWeeklyTrackers();
+        updateStats();
+      }
+    }
+
+    // Delete an active habit.
+    function deleteHabit(index) {
+      if (confirm("Are you sure you want to delete this habit?")) {
+        habits.splice(index, 1);
+        saveData();
+        renderWeeklyTrackers();
+        updateStats();
+      }
+    }
+
+    // Archive (end) an active habit.
+    function archiveHabit(index) {
+      if (confirm("Are you sure you want to archive this habit? This will end tracking for this habit.")) {
+        let habit = habits[index];
+        habit.endedOn = new Date().toISOString().slice(0, 10); // Record today's date.
+        habitData.archivedHabits.push(habit);
+        habits.splice(index, 1);
+        saveData();
+        renderWeeklyTrackers();
+        updateStats();
+      }
+    }
+
+    // Undo the archival of a habit.
+    function undoArchive(idx) {
+      let habit = habitData.archivedHabits[idx];
+      // Remove from archivedHabits.
+      habitData.archivedHabits.splice(idx, 1);
+      // Remove the endedOn property and reset weekly days for fresh tracking.
+      delete habit.endedOn;
+      // Add it back to active habits.
+      habits.push(habit);
+      saveData();
+      renderWeeklyTrackers();
+      updateStats();
+    }
+
+    // Toggle the completion state for a specific day.
+    function toggleDay(habitIndex, dayIndex) {
+      habits[habitIndex].days[dayIndex] = !habits[habitIndex].days[dayIndex];
+      saveData();
+      renderWeeklyTrackers();
+      updateStats();
+    }
+
+    // Calculate the completion percentage.
+    function calculateCompletion(habit) {
+      let completedDays = habit.days.filter(Boolean).length;
+      return ((completedDays / 7) * 100).toFixed(1) + "%";
+    }
+
+    // Update the statistics table combining active and archived habits.
+    function updateStats() {
+      let tableBody = document.getElementById("statsTableBody");
+      tableBody.innerHTML = "";
+      // First, list active habits.
+      habits.forEach(habit => {
+        let totalDays = habit.days.filter(Boolean).length;
+        let weeksWithFiveDays = totalDays >= 5 ? 1 : 0;
+        let row = `<tr>
+                    <td>${habit.name}</td>
+                    <td>${totalDays}/365</td>
+                    <td>${weeksWithFiveDays}/52</td>
+                    <td></td>
+                    <td></td>
+                   </tr>`;
+        tableBody.innerHTML += row;
+      });
+      // Then, list archived habits with an option to undo.
+      habitData.archivedHabits.forEach((habit, idx) => {
+        let totalDays = habit.days.filter(Boolean).length;
+        let weeksWithFiveDays = totalDays >= 5 ? 1 : 0;
+        let row = `<tr>
+                    <td>${habit.name}</td>
+                    <td>${totalDays}/365</td>
+                    <td>${weeksWithFiveDays}/52</td>
+                    <td>${habit.endedOn}</td>
+                    <td><button onclick="undoArchive(${idx})">Undo Archive</button></td>
+                   </tr>`;
+        tableBody.innerHTML += row;
+      });
+    }
+
+    // Helper: Returns a short month name if the full name is longer than 4 letters.
+    function formatMonth(date) {
+      const fullName = date.toLocaleString('default', { month: 'long' });
+      return fullName.length > 4 ? date.toLocaleString('default', { month: 'short' }) : fullName;
+    }
+
+    // Format a date relative to the week's start (Month Day).
+    function formatDate(startDate, dayOffset) {
+      let newDate = new Date(startDate);
+      newDate.setDate(newDate.getDate() + dayOffset);
+      return formatMonth(newDate) + " " + newDate.getDate();
+    }
+
+    // Render the weekly tracker for active habits.
+    function renderWeeklyTrackers() {
+    let container = document.getElementById("weeklyTrackers");
+    let today = new Date();
+    let header = `<div class="week-header">
+                    Week ${currentWeekNumber}: ${startDate.toDateString()} - ${new Date(startDate.getTime() + 6*24*60*60*1000).toDateString()}
+                  </div>
+                  <div class="today-date">Today is: ${today.toDateString()}</div>`;
+    
+    let tableHTML = `<table>
+                       <thead>
+                         <tr>
+                           <th>Habit</th>
+                           <th>${formatDate(startDate, 0)}</th>
+                           <th>${formatDate(startDate, 1)}</th>
+                           <th>${formatDate(startDate, 2)}</th>
+                           <th>${formatDate(startDate, 3)}</th>
+                           <th>${formatDate(startDate, 4)}</th>
+                           <th>${formatDate(startDate, 5)}</th>
+                           <th>${formatDate(startDate, 6)}</th>
+                           <th>Weekly Completion %</th>
+                           <th>Actions</th>
+                         </tr>
+                       </thead>
+                       <tbody>`;
+    
+    let todayIndex = Math.floor((today - startDate) / (1000 * 60 * 60 * 24));
+    todayIndex = Math.max(0, Math.min(todayIndex, 6));
+    
+    habits.forEach((habit, habitIndex) => {
+      tableHTML += `<tr draggable="true"
+                          ondragstart="handleDragStart(event, ${habitIndex})"
+                          ondragover="handleDragOver(event)"
+                          ondrop="handleDrop(event, ${habitIndex})">
+                      <td>${habit.name}</td>`;
+      for (let i = 0; i < 7; i++) {
+        tableHTML += `<td>`;
+        if (i < todayIndex) {
+          if (habit.days[i]) {
+            tableHTML += `<input type="checkbox" onclick="toggleDay(${habitIndex}, ${i})" checked>`;
+          } else {
+            tableHTML += `<span class="red-x" onclick="toggleDay(${habitIndex}, ${i})">X</span>`;
+          }
+        } else {
+          tableHTML += `<input type="checkbox" onclick="toggleDay(${habitIndex}, ${i})" ${habit.days[i] ? "checked" : ""}>`;
+        }
+        tableHTML += `</td>`;
+      }
+      tableHTML += `<td>${calculateCompletion(habit)}</td>
+                     <td>
+                       <span class="edit-btn" onclick="editHabit(${habitIndex})">✏️</span>
+                       <span class="delete-btn" onclick="deleteHabit(${habitIndex})">❌</span>
+                       <span class="archive-btn" onclick="archiveHabit(${habitIndex})" title="End this habit">🗃️</span>
+                     </td>
+                   </tr>`;
+    });
+    tableHTML += `</tbody></table>`;
+    container.innerHTML = header + tableHTML;
+  }
+
+    // Returns the week number for a given date.
+    function getWeekNumber(date) {
+        // Get the Sunday of the current week.
+        const weekStart = getWeekStartDate(date);
+        // Get the Sunday on or before January 1 of the same year.
+        const jan1 = new Date(date.getFullYear(), 0, 1);
+        const firstWeekStart = getWeekStartDate(jan1);
+        // Calculate the number of days between these two Sundays.
+        const diffDays = Math.floor((weekStart - firstWeekStart) / 86400000);
+        // Divide by 7 (full weeks) and add 1 so that the first week is week 1.
+    return Math.floor(diffDays / 7) + 1;
+}
+
+    // Returns the start date (Sunday) for the week of a given date.
+    function getWeekStartDate(date) {
+        let d = new Date(date); 
+        d.setDate(d.getDate() - d.getDay()); // subtract the current day index to get Sunday
+        d.setHours(0, 0, 0, 0); // reset the time to midnight
+    return d;
+}
+    let draggedHabitIndex = null;
+
+    function handleDragStart(e, index) {
+        draggedHabitIndex = index;
+        e.dataTransfer.effectAllowed = 'move';
+}
+
+    function handleDragOver(e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+}
+
+    function handleDrop(e, targetIndex) {
+    e.preventDefault();
+    if (draggedHabitIndex === null) return;
+    // Remove the habit from its original position
+    const draggedHabit = habits.splice(draggedHabitIndex, 1)[0];
+    // Insert the habit at the new position
+    habits.splice(targetIndex, 0, draggedHabit);
+    saveData();
+    renderWeeklyTrackers();
+    updateStats();
+    draggedHabitIndex = null;
+}
+
+    // Render archived weeks (past week progress).
+    function renderArchivedWeeks() {
+      let archiveContainer = document.getElementById("archiveSection");
+      if (!habitData.archivedWeeks || habitData.archivedWeeks.length === 0) {
+        archiveContainer.innerHTML = "<h2>No archived weeks yet.</h2>";
+        return;
+      }
+      
+      let archiveHTML = "<h2>Archived Weeks</h2>";
+      habitData.archivedWeeks.forEach(week => {
+        let weekStart = new Date(week.startDate);
+        let weekEnd = new Date(weekStart.getTime() + 6 * 24 * 60 * 60 * 1000);
+        let weekNumber = getWeekNumber(weekStart);
+        archiveHTML += `<div class="week-header">
+                          Week ${weekNumber}: ${weekStart.toDateString()} - ${weekEnd.toDateString()}
+                        </div>`;
+        archiveHTML += `<table>
+                          <thead>
+                            <tr>
+                              <th>Habit</th>
+                              <th>Completed Days</th>
+                              <th>Completion %</th>
+                            </tr>
+                          </thead>
+                          <tbody>`;
+        week.habits.forEach(habit => {
+          let completed = habit.days.filter(Boolean).length;
+          let percentage = ((completed / 7) * 100).toFixed(1) + "%";
+          archiveHTML += `<tr>
+                            <td>${habit.name}</td>
+                            <td>${completed} / 7</td>
+                            <td>${percentage}</td>
+                          </tr>`;
+        });
+        archiveHTML += `</tbody></table>`;
+      });
+      archiveContainer.innerHTML = archiveHTML;
+    }
+
+    // On page load, load data and render all sections.
+    window.onload = function() {
+      loadData();
+      renderWeeklyTrackers();
+      updateStats();
+      renderArchivedWeeks();
+    }
+  </script>
+</body>
+</html>
